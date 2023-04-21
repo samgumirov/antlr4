@@ -1,13 +1,8 @@
-// Copyright (c) 2012-2017 The ANTLR Project. All rights reserved.
+// Copyright (c) 2012-2022 The ANTLR Project. All rights reserved.
 // Use of this file is governed by the BSD 3-clause license that
 // can be found in the LICENSE.txt file in the project root.
 
 package antlr
-
-import (
-	"sort"
-	"sync"
-)
 
 type DFA struct {
 	// atnStartState is the ATN state in which this was created
@@ -16,25 +11,36 @@ type DFA struct {
 	decision int
 
 	// states is all the DFA states. Use Map to get the old state back; Set can only
-	// indicate whether it is there.
-	states map[int]*DFAState
-	statesMu sync.RWMutex
+	// indicate whether it is there. Go maps implement key hash collisions and so on and are very
+	// good, but the DFAState is an object and can't be used directly as the key as it can in say JAva
+	// amd C#, whereby if the hashcode is the same for two objects, then Equals() is called against them
+	// to see if they really are the same object.
+	//
+	//
+	states *JStore[*DFAState, *ObjEqComparator[*DFAState]]
+
+	numstates int
 
 	s0 *DFAState
-	s0Mu sync.RWMutex
 
 	// precedenceDfa is the backing field for isPrecedenceDfa and setPrecedenceDfa.
 	// True if the DFA is for a precedence decision and false otherwise.
 	precedenceDfa bool
-	precedenceDfaMu sync.RWMutex
 }
 
 func NewDFA(atnStartState DecisionState, decision int) *DFA {
-	return &DFA{
+	dfa := &DFA{
 		atnStartState: atnStartState,
 		decision:      decision,
-		states:        make(map[int]*DFAState),
+		states:        NewJStore[*DFAState, *ObjEqComparator[*DFAState]](&ObjEqComparator[*DFAState]{}),
 	}
+	if s, ok := atnStartState.(*StarLoopEntryState); ok && s.precedenceRuleDecision {
+		dfa.precedenceDfa = true
+		dfa.s0 = NewDFAState(-1, NewBaseATNConfigSet(false))
+		dfa.s0.isAcceptState = false
+		dfa.s0.requiresFullContext = false
+	}
+	return dfa
 }
 
 // getPrecedenceStartState gets the start state for the current precedence and
@@ -79,8 +85,6 @@ func (d *DFA) setPrecedenceStartState(precedence int, startState *DFAState) {
 }
 
 func (d *DFA) getPrecedenceDfa() bool {
-	d.precedenceDfaMu.RLock()
-	defer d.precedenceDfaMu.RUnlock()
 	return d.precedenceDfa
 }
 
@@ -91,7 +95,8 @@ func (d *DFA) getPrecedenceDfa() bool {
 // true or nil otherwise, and d.precedenceDfa is updated.
 func (d *DFA) setPrecedenceDfa(precedenceDfa bool) {
 	if d.getPrecedenceDfa() != precedenceDfa {
-		d.setStates(make(map[int]*DFAState))
+		d.states = NewJStore[*DFAState, *ObjEqComparator[*DFAState]](&ObjEqComparator[*DFAState]{})
+		d.numstates = 0
 
 		if precedenceDfa {
 			precedenceState := NewDFAState(-1, NewBaseATNConfigSet(false))
@@ -104,64 +109,24 @@ func (d *DFA) setPrecedenceDfa(precedenceDfa bool) {
 			d.setS0(nil)
 		}
 
-		d.precedenceDfaMu.Lock()
-		defer d.precedenceDfaMu.Unlock()
 		d.precedenceDfa = precedenceDfa
 	}
 }
 
 func (d *DFA) getS0() *DFAState {
-	d.s0Mu.RLock()
-	defer d.s0Mu.RUnlock()
 	return d.s0
 }
 
 func (d *DFA) setS0(s *DFAState) {
-	d.s0Mu.Lock()
-	defer d.s0Mu.Unlock()
 	d.s0 = s
 }
 
-func (d *DFA) getState(hash int) (*DFAState, bool) {
-	d.statesMu.RLock()
-	defer d.statesMu.RUnlock()
-	s, ok := d.states[hash]
-	return s, ok
-}
-
-func (d *DFA) setStates(states map[int]*DFAState) {
-	d.statesMu.Lock()
-	defer d.statesMu.Unlock()
-	d.states = states
-}
-
-func (d *DFA) setState(hash int, state *DFAState) {
-	d.statesMu.Lock()
-	defer d.statesMu.Unlock()
-	d.states[hash] = state
-}
-
-func (d *DFA) numStates() int {
-	d.statesMu.RLock()
-	defer d.statesMu.RUnlock()
-	return len(d.states)
-}
-
-type dfaStateList []*DFAState
-
-func (d dfaStateList) Len() int           { return len(d) }
-func (d dfaStateList) Less(i, j int) bool { return d[i].stateNumber < d[j].stateNumber }
-func (d dfaStateList) Swap(i, j int)      { d[i], d[j] = d[j], d[i] }
-
 // sortedStates returns the states in d sorted by their state number.
 func (d *DFA) sortedStates() []*DFAState {
-	vs := make([]*DFAState, 0, len(d.states))
 
-	for _, v := range d.states {
-		vs = append(vs, v)
-	}
-
-	sort.Sort(dfaStateList(vs))
+	vs := d.states.SortedSlice(func(i, j *DFAState) bool {
+		return i.stateNumber < j.stateNumber
+	})
 
 	return vs
 }

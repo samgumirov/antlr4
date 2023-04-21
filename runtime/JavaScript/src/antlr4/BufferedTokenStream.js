@@ -1,14 +1,12 @@
-/* Copyright (c) 2012-2017 The ANTLR Project. All rights reserved.
+/* Copyright (c) 2012-2022 The ANTLR Project. All rights reserved.
  * Use of this file is governed by the BSD 3-clause license that
  * can be found in the LICENSE.txt file in the project root.
  */
 
-const {Token} = require('./Token');
-const Lexer = require('./Lexer');
-const {Interval} = require('./IntervalSet');
-
-// this is just to keep meaningful parameter types to Parser
-class TokenStream {}
+import Token from './Token.js';
+import Lexer from './Lexer.js';
+import Interval from './misc/Interval.js';
+import TokenStream from "./TokenStream.js";
 
 /**
  * This implementation of {@link TokenStream} loads tokens from a
@@ -22,7 +20,7 @@ class TokenStream {}
  * {@link Token//HIDDEN_CHANNEL}, use a filtering token stream such a
  * {@link CommonTokenStream}.</p>
  */
-class BufferedTokenStream extends TokenStream {
+export default class BufferedTokenStream extends TokenStream {
 	constructor(tokenSource) {
 
 		super();
@@ -341,11 +339,11 @@ class BufferedTokenStream extends TokenStream {
 		return this.tokenSource.getSourceName();
 	}
 
-// Get the text of all tokens in this buffer.///
+	// Get the text of all tokens in this buffer.///
 	getText(interval) {
 		this.lazyInit();
 		this.fill();
-		if (interval === undefined || interval === null) {
+		if (!interval) {
 			interval = new Interval(0, this.tokens.length - 1);
 		}
 		let start = interval.start;
@@ -373,14 +371,16 @@ class BufferedTokenStream extends TokenStream {
 		return s;
 	}
 
-// Get all tokens from lexer until EOF///
+	// Get all tokens from lexer until EOF///
 	fill() {
 		this.lazyInit();
-		while (this.fetch(1000) === 1000) {
-			continue;
-		}
+		// noinspection StatementWithEmptyBodyJS
+		while (this.fetch(1000) === 1000);
 	}
 }
 
-
-module.exports = BufferedTokenStream;
+Object.defineProperty(BufferedTokenStream, "size", {
+	get: function() {
+		return this.tokens.length;
+	}
+})
